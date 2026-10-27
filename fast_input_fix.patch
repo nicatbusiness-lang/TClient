@@ -1,0 +1,53 @@
+--- a/src/game/client/gameclient.cpp
++++ b/src/game/client/gameclient.cpp
+@@ -4456,8 +4456,9 @@
+ }
+ vec2 CGameClient::GetFastInputPos(int ClientId)
+ {
+-	float PredIntraTick = Client()->PredIntraGameTick(g_Config.m_ClDummy);
+-	int PredTick = Client()->PredGameTick(g_Config.m_ClDummy);
++	const float PredIntraTick = Client()->PredIntraGameTick(g_Config.m_ClDummy);
++	const int PredTick = Client()->PredGameTick(g_Config.m_ClDummy);
++	const int PrevGameTick = Client()->PrevGameTick(g_Config.m_ClDummy);
+ 
+ 	vec2 Pos = mix(m_aClients[ClientId].m_PrevPredicted.m_Pos, m_aClients[ClientId].m_Predicted.m_Pos, PredIntraTick);
+ 
+@@ -4472,14 +4473,35 @@
+ 
+ 	FastInputTicks += CarryOverTicks;
+ 
++	// A tick is usable only if its ring-buffer slots hold exactly that tick number.
++	// Stale slots from ~200 ticks ago hold other values, so comparing with <= / >=
++	// (as before) could accept garbage positions.
++	auto IsValidTick = [&](int Tick) {
++		return Tick - 1 >= PrevGameTick &&
++			m_aClients[ClientId].m_aPredTick[(Tick - 1) % 200] == Tick - 1 &&
++			m_aClients[ClientId].m_aPredTick[Tick % 200] == Tick;
++	};
++
+ 	int FinalTick = PredTick + FastInputTicks;
+ 
+-	if(FinalTick > 0 &&
+-		m_aClients[ClientId].m_aPredTick[(FinalTick - 1) % 200] >= Client()->PrevGameTick(g_Config.m_ClDummy) &&
+-		m_aClients[ClientId].m_aPredTick[FinalTick % 200] <= Client()->PredGameTick(g_Config.m_ClDummy) + FastInputTicks)
++	// The newest fast-input ticks may not be predicted yet. Instead of dropping straight back
++	// to the un-advanced position (the visible snap), step back to the newest tick that is valid.
++	while(FinalTick > PredTick && !IsValidTick(FinalTick))
++	{
++		FinalTick--;
++		FinalIntra = 1.0f;
++	}
++
++	if(FinalTick > 0 && IsValidTick(FinalTick))
+ 	{
+ 		Pos = mix(m_aClients[ClientId].m_aPredPos[(FinalTick - 1) % 200], m_aClients[ClientId].m_aPredPos[FinalTick % 200], FinalIntra);
+ 	}
++#if defined(TC_FAST_INPUT_DEBUG)
++	else
++	{
++		dbg_msg("tc_fast_input", "fallback: PredTick=%d FastTicks=%d PrevTick=%d", PredTick, FastInputTicks, PrevGameTick);
++	}
++#endif
+ 
+ 	return Pos;
+ }
